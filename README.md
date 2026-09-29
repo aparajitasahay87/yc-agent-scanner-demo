@@ -1,6 +1,53 @@
 # YCAgentScanner 🛡️
 ### Deterministic Runtime Policy Enforcement for Autonomous AI Agents
 
+> **The Host Application** establishes the trusted task context.  
+> **The Agent** decides what to do next.  
+> **YCAgentScanner** enforces the authorization boundary at runtime.
+
+---
+
+## Why a Separate Runtime Scanner?
+
+A common question is: *"Why not just put these checks directly inside the host application?"*
+
+Traditional backend workflows are largely deterministic—the application explicitly defines which API or database operation should execute next.
+
+Autonomous AI agents, however, can dynamically select tools and determine the sequence of actions needed to complete a task. The exact action taken at runtime may not be known when the host initially creates the task.
+
+This creates a distinct enforcement point:
+
+> **The host establishes the task context. The agent proposes the action. The runtime enforcement layer decides whether that action is authorized before the protected resource is accessed.**
+
+YCAgentScanner acts as a **Policy Enforcement Point (PEP)** at this boundary. It evaluates each tool request against the trusted task context and configured policy, returning an `ALLOW` or `DENY` decision before execution.
+
+---
+
+## Architecture & Data Flow
+
+```text
+Host Application
+  │
+  │ establishes trusted task context
+  ▼
+Agent Runtime (CrewAI / LangGraph)
+  │
+  │ agent selects next tool/action
+  ▼
+YCAgentScanner (Policy Enforcement Point)
+  │
+  │ evaluates action against
+  │ trusted context + policy
+  │
+  ├───────────────┐
+  │               │
+ALLOW             DENY
+  │               │
+  ▼               ▼
+Tool / API / DB   Request Blocked
+# YCAgentScanner 🛡️
+### Deterministic Runtime Policy Enforcement for Autonomous AI Agents
+
 > **The Agent** is responsible for figuring out the sequence needed to complete a task.  
 > **The Host Application** establishes the trusted task context and authorization boundaries.  
 > **YCAgentScanner** enforces those boundaries on every tool call and operation before the requested resource is touched.
