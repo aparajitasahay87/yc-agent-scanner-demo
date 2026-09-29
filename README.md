@@ -568,6 +568,35 @@ It should not be considered a production security boundary without additional se
 
 ---
 
+┌──────────────────────────────────┐
+│        Support Agent Demo        │
+│                                  │
+│ Ticket: #123                     │
+│ Customer: 1042                   │
+│                                  │
+│ "Resolve this customer's issue"  │
+│                                  │
+│          [Run Agent]             │
+└──────────────────┬───────────────┘
+                   │
+                   ▼
+         Host FastAPI App
+                   │
+          establishes context
+                   │
+                   ▼
+              AI Agent
+                   │
+              tool request
+                   │
+                   ▼
+            YCAgentScanner
+                   │
+              ALLOW / DENY
+                   │
+                   ▼
+             Mock Database
+
 ## 📜 License
 
 Add your license here.
