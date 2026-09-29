@@ -1,3 +1,22 @@
+# YCAgentScanner 🛡️
+### Deterministic Runtime Policy Enforcement for Autonomous AI Agents
+
+> **The Agent** is responsible for figuring out the sequence needed to complete a task.  
+> **The Host Application** establishes the trusted task context and authorization boundaries.  
+> **YCAgentScanner** enforces those boundaries on every tool call and operation before the requested resource is touched.
+
+---
+
+## Architecture & Data Flow
+
+```mermaid
+graph TD
+    A["Host Application<br><i>Establishes task & policy boundaries</i>"] -->|Trusted Context| B["Agent Runtime<br><i>Executes task autonomously</i>"]
+    B -->|Tool Request + Operation| C["YCAgentScanner / PEP<br><i>Evaluates Action vs. Policy</i>"]
+    C -->|ALLOW| D["Host Resources / DB"]
+    C -->|DENY: ACTION_NOT_ALLOWED_FOR_TASK| E["Execution Blocked"]
+
+
 # YCAgentScanner
 
 # YCAgentScanner 🛡️
