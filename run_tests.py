@@ -1,86 +1,91 @@
-import urllib.request
-import json
+import httpx
 
-URL = "http://127.0.0.1:8000/api/agent/tool-call"
+BASE_URL = "http://127.0.0.1:8000/api/v1/enforce"
 
-test_cases = [
+tests = [
     {
-        "name": "TEST 1: Legitimate Request (Expected: 200 OK)",
+        "name": "Test 1: Policy 1 — Normal Access (Should ALLOW)",
         "payload": {
-            "token_claims": {
-                "sub": "alice",
-                "tenant": "Acme",
-                "act": { "client_id": "support-agent-17", "role": "support-agent" }
+            "context": {
+                "agent_id": "support-agent-17",
+                "user_id": "user-892",
+                "tenant_id": "acme",
+                "current_tenant": "acme",
+                "intent": "resolve_support_ticket"
             },
-            "tool_call": {
-                "tool": "customer_lookup",
-                "tenant_context": "Acme",
-                "rows_requested": 10,
-                "purpose": "support_ticket_4812"
+            "action": {
+                "tool_name": "customer_lookup",
+                "record_count": 1,
+                "record_id": 101
             }
         }
     },
     {
-        "name": "TEST 2: Bulk Export / Prompt Injection Block (Expected: 403 Forbidden)",
+        "name": "Test 2: Policy 2 — Excessive / Bulk Access (Should DENY)",
         "payload": {
-            "token_claims": {
-                "sub": "alice",
-                "tenant": "Acme",
-                "act": { "client_id": "support-agent-17", "role": "support-agent" }
+            "context": {
+                "agent_id": "support-agent-17",
+                "user_id": "user-892",
+                "tenant_id": "acme",
+                "current_tenant": "acme",
+                "intent": "resolve_support_ticket"
             },
-            "tool_call": {
-                "tool": "customer_lookup",
-                "tenant_context": "Acme",
-                "rows_requested": 1000000,
-                "purpose": "injected_malicious_export"
+            "action": {
+                "tool_name": "customer_lookup",
+                "record_count": 5000,
+                "record_id": 101
             }
         }
     },
     {
-        "name": "TEST 3: Tenant Boundary Mismatch (Expected: 400 Bad Request)",
+        "name": "Test 3: Policy 3 — Cross-Tenant Access (Should DENY)",
         "payload": {
-            "token_claims": {
-                "sub": "alice",
-                "tenant": "Acme",
-                "act": { "client_id": "support-agent-17", "role": "support-agent" }
+            "context": {
+                "agent_id": "support-agent-17",
+                "user_id": "user-892",
+                "tenant_id": "acme",
+                "current_tenant": "globex",
+                "intent": "resolve_support_ticket"
             },
-            "tool_call": {
-                "tool": "get_record",
-                "tenant_context": "Globex",
-                "record_id": 103,
-                "purpose": "cross_tenant_probe"
+            "action": {
+                "tool_name": "customer_lookup",
+                "record_count": 1,
+                "record_id": 103
+            }
+        }
+    },
+    {
+        "name": "Test 4: Context Drift / Wrong Intent (Should DENY)",
+        "payload": {
+            "context": {
+                "agent_id": "support-agent-17",
+                "user_id": "user-892",
+                "tenant_id": "acme",
+                "current_tenant": "acme",
+                "intent": "resolve_support_ticket"
+            },
+            "action": {
+                "tool_name": "export_all_customers",
+                "record_count": 1,
+                "record_id": 101
             }
         }
     }
 ]
 
-print("==================================================")
-print("RUNNING YCAGENTSCANNER AUTOMATED TEST SUITE")
-print("==================================================")
+def run_tests():
+    print("🚀 Running Agent PEP Policy Test Suite...\n")
+    for test in tests:
+        print(f"--- {test['name']} ---")
+        try:
+            response = httpx.post(BASE_URL, json=test["payload"])
+            print(f"HTTP Status Code: {response.status_code}")
+            print("Response Body:")
+            print(response.json())
+        except httpx.ConnectError:
+            print("❌ Error: Could not connect to FastAPI server. Make sure 'uvicorn app.main:app --reload' is running!")
+            break
+        print("\n" + "="*50 + "\n")
 
-for i, test in enumerate(test_cases, 1):
-    print(f"\n[{i}] {test['name']}")
-    req = urllib.request.Request(
-        URL,
-        data=json.dumps(test["payload"]).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
-    
-    try:
-        with urllib.request.urlopen(req) as response:
-            status_code = response.getcode()
-            body = json.loads(response.read().decode("utf-8"))
-            print(f"Status Code: {status_code} ✅")
-            print(f"Response: {json.dumps(body, indent=2)}")
-    except urllib.error.HTTPError as e:
-        status_code = e.code
-        body = json.loads(e.read().decode("utf-8"))
-        print(f"Status Code: {status_code} 🛡️ (Blocked/Handled)")
-        print(f"Response: {json.dumps(body, indent=2)}")
-    except Exception as ex:
-        print(f"Error: {ex}")
-
-print("\n==================================================")
-print("TEST SUITE COMPLETED")
-print("==================================================")
+if __name__ == "__main__":
+    run_tests()
