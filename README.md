@@ -1,5 +1,12 @@
 # YCAgentScanner
 
+# YCAgentScanner 🛡️
+### Deterministic Runtime Policy Enforcement for Autonomous AI Agents
+
+> **The Agent Runtime** produces an explicit action.  
+> **The Host Application** establishes the authorization context.  
+> **YCAgentScanner** evaluates the concrete action against that context and policy before any resource is touched.
+
 > **Identity tells you who the agent is. Runtime authorization determines what that agent is allowed to do right now.**
 
 YCAgentScanner is a lightweight, self-hosted **runtime authorization layer for AI agents**.
