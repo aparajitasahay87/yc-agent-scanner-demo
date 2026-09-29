@@ -568,6 +568,9 @@ It should not be considered a production security boundary without additional se
 
 ---
 
+## Support Agent Demo — Architecture Flow
+
+```text
 ┌──────────────────────────────────┐
 │        Support Agent Demo        │
 │                                  │
@@ -580,22 +583,43 @@ It should not be considered a production security boundary without additional se
 └──────────────────┬───────────────┘
                    │
                    ▼
-         Host FastAPI App
-                   │
+         ┌─────────────────┐
+         │  Host FastAPI   │
+         │      App        │
+         └────────┬────────┘
+                  │
           establishes context
-                   │
-                   ▼
-              AI Agent
-                   │
-              tool request
-                   │
-                   ▼
-            YCAgentScanner
-                   │
-              ALLOW / DENY
-                   │
-                   ▼
-             Mock Database
+                  │
+                  ▼
+         ┌─────────────────┐
+         │     AI Agent    │
+         └────────┬────────┘
+                  │
+             tool request
+                  │
+                  ▼
+         ┌─────────────────┐
+         │ YCAgentScanner  │
+         │                 │
+         │   ALLOW / DENY  │
+         └────────┬────────┘
+                  │
+                  ▼
+         ┌─────────────────┐
+         │  Mock Database  │
+         └─────────────────┘
+```
+
+### Request Flow
+
+1. The user submits a support request through the **Support Agent Demo**.
+2. The **Host FastAPI App** establishes the runtime context.
+3. The **AI Agent** receives the request and generates a tool request.
+4. **YCAgentScanner** intercepts the tool request before it reaches the database.
+5. YCAgentScanner evaluates the request against the runtime context and authorization rules.
+6. The request is either **ALLOWED** or **DENIED**.
+7. Only an allowed request reaches the **Mock Database**.
+
 
 ## 📜 License
 
