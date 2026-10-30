@@ -1,4 +1,9 @@
-# YCAgentScanner
+# YCAgentScanner 🛡️
+### Deterministic Runtime Policy Enforcement for Autonomous AI Agents
+
+> **The Host Application** establishes the trusted task context.  
+> **The Agent** decides what to do next.  
+> **YCAgentScanner** enforces the authorization boundary at runtime.
 
 > **Identity tells you who the agent is. Runtime authorization determines what that agent is allowed to do right now.**
 
@@ -25,6 +30,20 @@ Autonomous agents introduce another question:
 An agent may have a valid identity, a valid token, and access to the requested resource, and still attempt an action that has nothing to do with its current task: through prompt injection, a model mistake, or a tool it "discovered" along the way.
 
 This is the gap between **identity authorization** and **runtime action authorization**.
+
+---
+
+## 🤔 Why a Separate Runtime Scanner?
+
+A common question is: *"Why not just put these checks directly inside the host application?"*
+
+Traditional backend workflows are largely deterministic: the application explicitly defines which API or database operation should execute next.
+
+Autonomous AI agents, however, can dynamically select tools and determine the sequence of actions needed to complete a task. The exact action taken at runtime may not be known when the host initially creates the task.
+
+This creates a distinct enforcement point:
+
+> **The host establishes the task context. The agent proposes the action. The runtime enforcement layer decides whether that action is authorized before the protected resource is accessed.**
 
 ---
 
@@ -113,7 +132,7 @@ Example audit record:
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/your-username/yc-agent-scanner-demo.git
+git clone https://github.com/aparajitasahay87/yc-agent-scanner-demo.git
 cd yc-agent-scanner-demo
 python -m venv venv
 # Windows: .\venv\Scripts\Activate    macOS/Linux: source venv/bin/activate
