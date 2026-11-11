@@ -5,79 +5,11 @@
 > **The Agent** decides what to do next.  
 > **YCAgentScanner** enforces the authorization boundary at runtime.
 
----
-
-## Why a Separate Runtime Scanner?
-
-A common question is: *"Why not just put these checks directly inside the host application?"*
-
-Traditional backend workflows are largely deterministic—the application explicitly defines which API or database operation should execute next.
-
-Autonomous AI agents, however, can dynamically select tools and determine the sequence of actions needed to complete a task. The exact action taken at runtime may not be known when the host initially creates the task.
-
-This creates a distinct enforcement point:
-
-> **The host establishes the task context. The agent proposes the action. The runtime enforcement layer decides whether that action is authorized before the protected resource is accessed.**
-
-YCAgentScanner acts as a **Policy Enforcement Point (PEP)** at this boundary. It evaluates each tool request against the trusted task context and configured policy, returning an `ALLOW` or `DENY` decision before execution.
-
----
-
-## Architecture & Data Flow
-
-```text
-Host Application
-  │
-  │ establishes trusted task context
-  ▼
-Agent Runtime (CrewAI / LangGraph)
-  │
-  │ agent selects next tool/action
-  ▼
-YCAgentScanner (Policy Enforcement Point)
-  │
-  │ evaluates action against
-  │ trusted context + policy
-  │
-  ├───────────────┐
-  │               │
-ALLOW             DENY
-  │               │
-  ▼               ▼
-Tool / API / DB   Request Blocked
-# YCAgentScanner 🛡️
-### Deterministic Runtime Policy Enforcement for Autonomous AI Agents
-
-> **The Agent** is responsible for figuring out the sequence needed to complete a task.  
-> **The Host Application** establishes the trusted task context and authorization boundaries.  
-> **YCAgentScanner** enforces those boundaries on every tool call and operation before the requested resource is touched.
-
----
-
-## Architecture & Data Flow
-
-```mermaid
-graph TD
-    A["Host Application<br><i>Establishes task & policy boundaries</i>"] -->|Trusted Context| B["Agent Runtime<br><i>Executes task autonomously</i>"]
-    B -->|Tool Request + Operation| C["YCAgentScanner / PEP<br><i>Evaluates Action vs. Policy</i>"]
-    C -->|ALLOW| D["Host Resources / DB"]
-    C -->|DENY: ACTION_NOT_ALLOWED_FOR_TASK| E["Execution Blocked"]
-
-
-# YCAgentScanner
-
-# YCAgentScanner 🛡️
-### Deterministic Runtime Policy Enforcement for Autonomous AI Agents
-
-> **The Agent Runtime** produces an explicit action.  
-> **The Host Application** establishes the authorization context.  
-> **YCAgentScanner** evaluates the concrete action against that context and policy before any resource is touched.
-
 > **Identity tells you who the agent is. Runtime authorization determines what that agent is allowed to do right now.**
 
 YCAgentScanner is a lightweight, self-hosted **runtime authorization layer for AI agents**.
 
-It sits between an AI agent and the tools it wants to use—APIs, databases, internal services, and other application capabilities—and evaluates each requested action against **trusted application context and explicit authorization policies** before execution.
+It sits between an AI agent and the tools it wants to use (APIs, databases, internal services) and evaluates each requested action against **trusted, host-signed task context** before execution.
 
 The goal is simple:
 
@@ -87,612 +19,203 @@ The goal is simple:
 
 ## 🎯 The Problem
 
-AI agents are increasingly able to autonomously call:
+AI agents increasingly call APIs, databases, and internal tools on their own. Traditional identity and access control answers:
 
-- Databases
-- APIs
-- Internal tools
-- Customer systems
-- Administrative functions
+> **Who is this agent?** and **What resources can this identity access?**
 
-Traditional identity and access-control systems are designed primarily around questions such as:
-
-> **Who is this agent?**
-
-and:
-
-> **What resources can this identity access?**
-
-But autonomous agents introduce another question:
+Autonomous agents introduce another question:
 
 > **Is this specific action authorized in the context of what the application asked the agent to do?**
 
-An agent may have:
+An agent may have a valid identity, a valid token, and access to the requested resource, and still attempt an action that has nothing to do with its current task: through prompt injection, a model mistake, or a tool it "discovered" along the way.
 
-- A valid identity
-- A valid token
-- Access to the requested resource
-- A valid session
-
-…and still attempt an action that violates:
-
-- Task boundaries
-- Tenant isolation
-- Data-volume limits
-- Tool-level permissions
-- Application-defined intent
-
-This creates a gap between **identity authorization** and **runtime action authorization**.
+This is the gap between **identity authorization** and **runtime action authorization**.
 
 ---
 
-## 💡 The Solution
+## 🤔 Why a Separate Runtime Scanner?
 
-**YCAgentScanner** acts as a **Policy Enforcement Point (PEP)** between an AI agent and its tools.
+A common question is: *"Why not just put these checks directly inside the host application?"*
 
-Before a tool call executes, YCAgentScanner evaluates the request using trusted context such as:
+Traditional backend workflows are largely deterministic: the application explicitly defines which API or database operation should execute next.
 
-- Agent identity
-- Tenant
-- Application-defined task context
-- Requested tool/action
-- Resource
-- Explicit policy
-- Runtime constraints
+Autonomous AI agents, however, can dynamically select tools and determine the sequence of actions needed to complete a task. The exact action taken at runtime may not be known when the host initially creates the task.
 
-It produces a deterministic, auditable decision:
+This creates a distinct enforcement point:
 
-```text
-ALLOW
-```
-
-or:
-
-```text
-DENY
-```
-
-The scanner does not give the LLM authority to define its own permissions.
-
-Instead, the **trusted host application establishes the authorization context**, and the scanner evaluates whether the agent's requested action is consistent with that context.
+> **The host establishes the task context. The agent proposes the action. The runtime enforcement layer decides whether that action is authorized before the protected resource is accessed.**
 
 ---
 
-## 🏗️ Core Architecture
+## 💡 The Approach
 
-### Intent Does NOT Come From the LLM
+YCAgentScanner acts as a **Policy Enforcement Point (PEP)** between the agent and its tools.
 
-This is a fundamental design principle of YCAgentScanner.
-
-The LLM should not be able to redefine its own authorization context by simply generating a different intent.
-
-Instead:
+1. **The trusted host application defines the task**, not the LLM. It builds a task context (user, intent, allowed tools, resource scope) and signs it with HMAC-SHA256.
+2. **The agent proposes an action** (tool, operation, resource) and sends it to the scanner together with the signed context.
+3. **The scanner verifies the signature**, then checks the action against the context.
+4. **On ALLOW, the scanner executes the action** using a downstream credential that only the scanner holds. On DENY, the call never reaches the API.
+5. **Every decision is written to an audit log.**
+6. **It fails closed:** any unexpected error during evaluation results in DENY.
 
 ```text
-┌─────────────────────────────┐
-│      Trusted Application    │
-│                             │
-│ Establishes task context    │
-│ intent = resolve_support    │
-│ ticket                      │
-└──────────────┬──────────────┘
-               │
-               ▼
-┌─────────────────────────────┐
-│          AI Agent           │
-│                             │
-│ Requests a tool/action      │
-└──────────────┬──────────────┘
-               │
-               ▼
-┌─────────────────────────────┐
-│      YCAgentScanner / PEP   │
-│                             │
-│ Identity                    │
-│ Tenant                      │
-│ Trusted Context             │
-│ Requested Action            │
-│ Policy                      │
-└──────────────┬──────────────┘
-               │
-          ┌────┴────┐
-          ▼         ▼
-       ALLOW       DENY
-          │         │
-          ▼         ▼
-      Execute     Block
-       Action      Action
+┌──────────────────────────┐
+│   Trusted Application    │  builds + signs task context
+│   intent = book_class    │  (user, allowed tools, resource scope)
+└────────────┬─────────────┘
+             ▼
+┌──────────────────────────┐
+│        AI Agent          │  proposes: booking.cancel(R001)
+│  (holds no API creds)    │
+└────────────┬─────────────┘
+             ▼
+┌──────────────────────────┐
+│   YCAgentScanner (PEP)   │  1. verify signature
+│                          │  2. tool allowed for task?
+│  holds Booking API key   │  3. resource in task scope?
+│                          │  4. operation fits intent?
+└──────┬────────────┬──────┘
+       ▼            ▼
+     ALLOW         DENY ──► audit log
+       │
+       ▼
+┌──────────────────────────┐
+│       Booking API        │
+└──────────────────────────┘
 ```
 
-### Why This Matters
-
-The agent controls **what it requests**.
-
-The trusted application controls **what task context it is authorized to operate within**.
-
-YCAgentScanner determines whether the requested action is permitted.
+The agent controls **what it requests**. The trusted application controls **what task it is operating within**. The scanner decides whether the two are consistent.
 
 ---
 
-## 🧪 MVP Demo
+## 🎬 Demo: Gym Booking Agent
 
-The MVP demonstrates four authorization scenarios.
+The demo uses a booking agent for a gym. The downstream Booking API is **intentionally vulnerable**: it requires an API key but performs no ownership check, so any caller with the key can cancel anyone's reservation. This mirrors a common real-world situation, where the agent's tool credential is broader than any single task.
 
-### 1. Normal Authorized Access — `ALLOW`
-
-The agent requests an action that is consistent with:
-
-- Its identity
-- Tenant
-- Role
-- Task context
-- Policy
-
-**Result:**
-
-```text
-ALLOW
-```
-
----
-
-### 2. Excessive / Bulk Access — `DENY`
-
-The agent attempts to retrieve more records than its policy allows.
-
-Example:
-
-```text
-Policy limit: 100 records
-Agent request: 10,000 records
-```
-
-**Result:**
-
-```text
-DENY
-```
-
-This demonstrates runtime enforcement of data-volume constraints.
-
----
-
-### 3. Cross-Tenant Access — `DENY`
-
-The agent attempts to access a resource belonging to a different tenant.
-
-Example:
-
-```text
-Agent tenant: acme
-Requested resource tenant: globex
-```
-
-**Result:**
-
-```text
-DENY
-```
-
-The authorization decision is made at runtime before the tool executes.
-
----
-
-### 4. Context Drift — `DENY`
-
-This is the core YCAgentScanner demonstration.
-
-The agent receives a legitimate task:
-
-```text
-intent = resolve_support_ticket
-```
-
-The agent initially performs an authorized lookup:
-
-```text
-customer_lookup
-```
-
-Later, because of prompt injection, model behavior, or other runtime conditions, it attempts:
-
-```text
-export_all_customers
-```
-
-The agent may still have:
-
-- A valid identity
-- A valid token
-- A valid session
-- Access to the underlying system
-
-But the requested action conflicts with the trusted application context.
-
-**Result:**
-
-```text
-DENY
-```
-
----
-
-## 🎬 Main Demo: Valid Identity, Wrong Action
-
-The primary demo follows this flow.
-
-### Step 1 — Establish Trusted Context
-
-The host application establishes the task outside of the LLM:
-
-```json
-{
-  "intent": "resolve_support_ticket"
-}
-```
-
-### Step 2 — Legitimate Tool Call
-
-The agent requests:
-
-```text
-customer_lookup
-```
-
-The scanner evaluates the request and returns:
-
-```text
-ALLOW
-```
-
-### Step 3 — Agent Goes Off-Task
-
-The agent subsequently requests:
-
-```text
-export_all_customers
-```
-
-The trusted context still indicates:
-
-```text
-resolve_support_ticket
-```
-
-### Step 4 — Runtime Authorization Decision
-
-YCAgentScanner detects the mismatch:
-
-```text
-INTENT_ACTION_MISMATCH
-```
-
-and blocks the request.
-
-Example decision:
-
-```json
-{
-  "decision": "DENY",
-  "policy": "SUPPORT_CUSTOMER_ACCESS",
-  "reason": "INTENT_ACTION_MISMATCH",
-  "agent_id": "support-agent-17",
-  "tenant_id": "acme",
-  "tool": "export_all_customers"
-}
-```
-
-The decision is both **machine-readable and auditable**.
-
----
-
-## 🔐 Authorization Model
-
-At a high level:
-
-```text
-Authorization Decision
-        =
-Identity
-+ Tenant
-+ Trusted Task Context
-+ Requested Action
-+ Resource
-+ Policy
-+ Runtime Constraints
-```
-
-The scanner evaluates these inputs before allowing the action to reach the underlying tool.
-
-Conceptually:
-
-```text
-if action_is_authorized(context, request, policy):
-    ALLOW
-else:
-    DENY
-```
-
-The important distinction is that **authorization is evaluated at action time**, rather than relying solely on permissions established when the agent's credentials were issued.
-
----
-
-## 🧱 Architecture Components
-
-| Component | Responsibility |
+| Reservation | Owner |
 |---|---|
-| Trusted Application | Establishes task context and authorization intent |
-| AI Agent | Generates tool/action requests |
-| YCAgentScanner | Evaluates runtime authorization |
-| Policy Engine | Defines authorization rules |
-| Tool / API / Database | Executes only authorized requests |
-| Audit Decision | Records `ALLOW` / `DENY` and decision context |
+| `R123` | `U123` (the user the agent is acting for) |
+| `R001` | `U456` (someone else) |
 
----
+`run_yc_pitch_demo.py` runs five live tests against the running services:
 
-## 🔐 Example Authorization Flow
+| # | Test | What happens | Result |
+|---|---|---|---|
+| 1 | **Vulnerable baseline** | Agent holds the API key and calls `DELETE /reservations/R001` directly | `200`: another user's reservation is cancelled |
+| 2 | **Runtime enforcement** | Same cancellation, routed through the scanner under a `book_class` task scoped to `R123` | `DENY ACTION_OUTSIDE_TASK_SCOPE`; Booking API receives 0 requests |
+| 3 | **Task binding** | Cancel `R123` (the user's own reservation) under two different tasks | `book_class` → `DENY`; `cancel_my_reservation` → `ALLOW`, executed by the scanner |
+| 4 | **Forged context** | Agent edits `user_id` in the signed context and reuses the old signature | `DENY INVALID_SIGNATURE` |
+| 5 | **Direct bypass** | Agent (with no API key in its runtime) calls the Booking API directly | `401`: rejected by the API |
 
-```text
-1. Application creates trusted task context
-                │
-                ▼
-2. Agent receives task
-                │
-                ▼
-3. Agent generates tool request
-                │
-                ▼
-4. YCAgentScanner intercepts request
-                │
-                ▼
-5. Scanner evaluates:
-   - Identity
-   - Tenant
-   - Intent
-   - Tool
-   - Resource
-   - Policy
-   - Runtime constraints
-                │
-          ┌─────┴─────┐
-          ▼           ▼
-       ALLOW         DENY
-          │           │
-          ▼           ▼
-    Tool executes   Request blocked
+**Test 3 is the core idea.** Identity, agent, API, resource and operation are all identical. Only the trusted task changes, and the decision flips.
+
+Example audit record:
+
+```json
+{
+  "timestamp": "2026-10-30T17:10:09Z",
+  "task_id": "T-123",
+  "agent_id": "booking-agent",
+  "subject": { "user_id": "U123", "tenant_id": "demo" },
+  "tool": "booking",
+  "operation": "cancel",
+  "resource_id": "R001",
+  "decision": "DENY",
+  "rule": "ACTION_OUTSIDE_TASK_SCOPE",
+  "reason": "Resource R001 is outside task scope",
+  "latency_ms": 0
+}
 ```
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Clone the Repository
-
-```powershell
-git clone https://github.com/your-username/yc-agent-scanner-demo.git
+```bash
+git clone https://github.com/aparajitasahay87/yc-agent-scanner-demo.git
 cd yc-agent-scanner-demo
-```
-
-### 2. Create a Virtual Environment
-
-```powershell
 python -m venv venv
-```
-
-### 3. Activate the Virtual Environment
-
-#### Windows PowerShell
-
-```powershell
-.\venv\Scripts\Activate
-```
-
-#### macOS / Linux
-
-```bash
-source venv/bin/activate
-```
-
-### 4. Install Dependencies
-
-```bash
+# Windows: .\venv\Scripts\Activate    macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
+### Configuration
 
-## ▶️ Run the API
+Secrets are read from environment variables. If they are unset, insecure `dev-only-*` defaults are used so the demo runs out of the box. Set real values for anything beyond a local demo.
 
-Start the FastAPI server:
+| Variable | Used by | Purpose |
+|---|---|---|
+| `SCANNER_SIGNING_SECRET` | scanner, demo script (as host app) | HMAC key for signing task context |
+| `BOOKING_API_KEY` | mock API, scanner | Credential for mutating Booking API calls |
+| `BOOKING_API_URL` | scanner | Booking API base URL (default `http://127.0.0.1:8001`) |
 
-```bash
-uvicorn app.main:app --reload
-```
+### Run the demo
 
-The API will be available locally at:
-
-```text
-http://127.0.0.1:8000
-```
-
-FastAPI interactive documentation:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
----
-
-## 🧪 Run the Test Suite
-
-Open a second terminal, activate the virtual environment, and run:
+Use three terminals, each with the virtual environment activated:
 
 ```bash
-python run_tests.py
+# Terminal 1: vulnerable Booking API
+uvicorn mock_api.main:app --port 8001
+
+# Terminal 2: YCAgentScanner
+uvicorn scanner.main:app --port 8002
+
+# Terminal 3: run the five tests
+python run_yc_pitch_demo.py
 ```
 
-The test suite demonstrates the authorization scenarios implemented by the MVP.
+The scanner's audit log is also available at `http://127.0.0.1:8002/audit/logs`, and interactive API docs at `/docs` on either service.
 
 ---
 
 ## 📁 Project Structure
 
 ```text
-YCAgentScanner/
-│
-├── app/
-│   ├── main.py
-│   └── ...
-│
-├── tests/
-│   └── ...
-│
-├── run_tests.py
-├── requirements.txt
-├── README.md
-└── ...
+yc-agent-scanner-demo/
+├── scanner/main.py          # YCAgentScanner PEP: signature check, policy, execution, audit
+├── mock_api/main.py         # Intentionally vulnerable Booking API
+├── run_yc_pitch_demo.py     # Five-test demo (also plays the trusted host application)
+├── app/                     # Earlier prototype (support-agent scenario, unsigned context)
+├── run_tests.py             # Tests for the earlier prototype in app/
+└── requirements.txt
 ```
 
----
-
-## 🛡️ What YCAgentScanner Is
-
-YCAgentScanner is:
-
-- A runtime authorization layer
-- A Policy Enforcement Point
-- Self-hosted
-- Lightweight
-- Designed for AI-agent tool calls
-- Deterministic at the authorization boundary
-- Auditable through explicit policy decisions
+`app/` contains the first iteration of the idea: a support agent blocked from `export_all_customers` during a `resolve_support_ticket` task, plus tenant and bulk-access checks. It is kept for reference. The gym-booking demo above is the current design: it adds signed context, scanner-held credentials, and execution through the PEP.
 
 ---
 
-## 🚫 What YCAgentScanner Is Not
+## 🛡️ What YCAgentScanner Is (and Isn't)
 
-YCAgentScanner is not:
+**It is** a runtime authorization layer and Policy Enforcement Point for agent tool calls. It is self-hosted, deterministic at the decision boundary, and auditable.
 
-- An identity provider
-- A replacement for authentication
-- A replacement for IAM
-- An LLM safety model
-- A prompt-injection detector
-- An LLM that decides whether another LLM is trustworthy
-
-Instead, it operates **after the agent generates an action but before that action reaches the protected tool**.
+**It is not** an identity provider, a replacement for IAM or authentication, a prompt-injection detector, or an LLM judging another LLM. It operates **after the agent proposes an action and before that action reaches the protected tool.**
 
 ---
 
-## 🧠 Core Insight
+## ⚠️ Current Status and Limitations
 
-Traditional authorization often answers:
+**This is a proof of concept, not a production security boundary.** Known limitations:
 
-> **Can this identity access this resource?**
-
-YCAgentScanner adds another runtime question:
-
-> **Is this specific action authorized in the trusted context in which this agent is operating?**
-
-This distinction becomes increasingly important as software moves from deterministic applications toward autonomous agents.
-
----
-
-## 🗣️ 60-Second YC Pitch
-
-> AI agents can now autonomously call databases, APIs, and internal tools. Traditional identity systems can establish who an agent is and what resources it can access, but a valid identity doesn't necessarily authorize every dynamically generated action the agent takes.
->
-> We built **YCAgentScanner**, a lightweight, self-hosted runtime authorization layer that sits between an agent and its tools. Before a tool call executes, it evaluates the agent's trusted application context against the actual requested action and returns a deterministic, auditable policy decision.
->
-> The key insight is simple:
->
-> **Identity tells you who the agent is; runtime authorization determines what that agent is allowed to do right now.**
->
-> Our MVP demonstrates this with a support-agent scenario: the agent is legitimately authorized to resolve a customer ticket, but when it attempts to export all customers, YCAgentScanner blocks the action—even though the agent's identity and credentials remain valid.
+- **No real LLM in the loop.** The demo sends hand-written tool calls to show the enforcement path deterministically. Wiring in an agent framework is future work.
+- **Policies are hard-coded** in `scanner/main.py` rather than expressed as policy-as-code (e.g. OPA/Rego or Cedar).
+- **Bypass protection relies on credential placement only.** Test 5 shows the agent cannot call the API without the key. It does not simulate network isolation, which a real deployment should add.
+- **Signed contexts do not expire.** There is no timestamp, nonce, or replay protection yet.
+- **A shared HMAC secret** is used instead of asymmetric signatures or a token format such as JWT.
+- **The audit log is in memory** and resets when the scanner restarts.
+- **The scanner does not replace server-side checks.** The Booking API should still verify ownership; the scanner adds task-level authorization on top.
 
 ---
 
 ## 🔭 Future Direction
 
-Potential areas for future development include:
-
-- Policy-as-code
-- Framework integrations for agent runtimes
-- FastAPI middleware
-- LangGraph integration
-- Tool-level authorization
-- Resource-level authorization
-- Rate and volume controls
-- Multi-tenant policy enforcement
-- Richer audit trails
-- Policy management APIs
-- Distributed deployment
-- Integration with existing identity and IAM systems
+- Real agent integration (e.g. LangGraph or MCP tool-call interception)
+- Declarative policy-as-code
+- Context expiry, nonces and replay protection
+- Asymmetric signing / integration with existing IAM token exchange
+- Persistent, tamper-evident audit trail
+- Network-level isolation in the reference deployment
 
 ---
-
-## ⚠️ Current Status
-
-**YCAgentScanner is an MVP / proof of concept.**
-
-The current implementation is intended to demonstrate the runtime authorization model and core policy-enforcement flows.
-
-It should not be considered a production security boundary without additional security review, testing, hardening, and operational controls.
-
----
-
-## Support Agent Demo — Architecture Flow
-
-```text
-┌──────────────────────────────────┐
-│        Support Agent Demo        │
-│                                  │
-│ Ticket: #123                     │
-│ Customer: 1042                   │
-│                                  │
-│ "Resolve this customer's issue"  │
-│                                  │
-│          [Run Agent]             │
-└──────────────────┬───────────────┘
-                   │
-                   ▼
-         ┌─────────────────┐
-         │  Host FastAPI   │
-         │      App        │
-         └────────┬────────┘
-                  │
-          establishes context
-                  │
-                  ▼
-         ┌─────────────────┐
-         │     AI Agent    │
-         └────────┬────────┘
-                  │
-             tool request
-                  │
-                  ▼
-         ┌─────────────────┐
-         │ YCAgentScanner  │
-         │                 │
-         │   ALLOW / DENY  │
-         └────────┬────────┘
-                  │
-                  ▼
-         ┌─────────────────┐
-         │  Mock Database  │
-         └─────────────────┘
-```
-
-### Request Flow
-
-1. The user submits a support request through the **Support Agent Demo**.
-2. The **Host FastAPI App** establishes the runtime context.
-3. The **AI Agent** receives the request and generates a tool request.
-4. **YCAgentScanner** intercepts the tool request before it reaches the database.
-5. YCAgentScanner evaluates the request against the runtime context and authorization rules.
-6. The request is either **ALLOWED** or **DENIED**.
-7. Only an allowed request reaches the **Mock Database**.
-
 
 ## 📜 License
 
